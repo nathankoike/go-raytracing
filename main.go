@@ -62,8 +62,8 @@ func handleResize(s screen.Screen, event size.Event, viewportBuffer *screen.Buff
 // Write a nice gradient to the pixel buffer
 func drawRainbowRectangle(pixelBuffer *image.RGBA) {
 	// Update the pixel buffer
-	for x := 0; x < viewportWidth; x++ {
-		for y := 0; y < viewportHeight; y++ {
+	for y := 0; y < viewportHeight; y++ {
+		for x := 0; x < viewportWidth; x++ {
 			pixelBuffer.SetRGBA(
 				x,
 				y,
@@ -78,8 +78,8 @@ func drawRainbowRectangle(pixelBuffer *image.RGBA) {
 
 // Write pseudo-random noise to the pixel buffer
 func drawNoise(pixelBuffer *image.RGBA) {
-	for x := 0; x < viewportWidth; x++ {
-		for y := 0; y < viewportHeight; y++ {
+	for y := 0; y < viewportHeight; y++ {
+		for x := 0; x < viewportWidth; x++ {
 			offset := randomUint16() & 7 // Increase randomness, reduce patterns
 			pixelBuffer.SetRGBA(
 				x,
