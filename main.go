@@ -59,23 +59,6 @@ func handleResize(s screen.Screen, event size.Event, viewportBuffer *screen.Buff
 	*viewportBuffer = newViewportBuffer
 }
 
-// Write a nice gradient to the pixel buffer
-func drawRainbowRectangle(pixelBuffer *image.RGBA) {
-	// Update the pixel buffer
-	for y := 0; y < viewportHeight; y++ {
-		for x := 0; x < viewportWidth; x++ {
-			pixelBuffer.SetRGBA(
-				x,
-				y,
-				color.RGBA{
-					uint8(math.Floor(float64(x) / float64(viewportWidth) * 256)),                                 // R
-					uint8(math.Floor(float64(y) / float64(viewportHeight) * 256)),                                // G
-					uint8(math.Max(math.Floor(float64(x*y)/float64(viewportWidth*viewportHeight)*256), minBlue)), // B
-					0xff}) // A
-		}
-	}
-}
-
 // Write pseudo-random noise to the pixel buffer
 func drawNoise(pixelBuffer *image.RGBA) {
 	for y := 0; y < viewportHeight; y++ {
@@ -89,6 +72,23 @@ func drawNoise(pixelBuffer *image.RGBA) {
 					uint8(randomUint16() >> offset), // G
 					uint8(randomUint16() >> offset), // B
 					0xff})                           // A
+		}
+	}
+}
+
+// Write a nice gradient to the pixel buffer
+func drawRainbowRectangle(pixelBuffer *image.RGBA) {
+	// Update the pixel buffer
+	for y := 0; y < viewportHeight; y++ {
+		for x := 0; x < viewportWidth; x++ {
+			pixelBuffer.SetRGBA(
+				x,
+				y,
+				color.RGBA{
+					uint8(math.Floor(float64(x) / float64(viewportWidth) * 256)),                                 // R
+					uint8(math.Floor(float64(y) / float64(viewportHeight) * 256)),                                // G
+					uint8(math.Max(math.Floor(float64(x*y)/float64(viewportWidth*viewportHeight)*256), minBlue)), // B
+					0xff}) // A
 		}
 	}
 }
