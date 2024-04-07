@@ -15,8 +15,12 @@ func (v Vec3) String() string {
 	return fmt.Sprintf("<%3.2[1]f, %3.2[2]f, %3.2[3]f>", v.x, v.y, v.z)
 }
 
+func (v Vec3) LengthSquared() float64 {
+	return v.x*v.x + v.y*v.y + v.z*v.z
+}
+
 func (v Vec3) Length() float64 {
-	return math.Sqrt(v.x*v.x + v.y*v.y + v.z*v.z)
+	return math.Sqrt(v.LengthSquared())
 }
 
 func (v Vec3) Scale(sc float64) Vec3 {

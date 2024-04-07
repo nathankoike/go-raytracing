@@ -1,6 +1,9 @@
 package main
 
-import "image/color"
+import (
+	"image/color"
+	"math"
+)
 
 // Implements Object interface
 type Sphere struct {
@@ -25,16 +28,35 @@ func (s Sphere) Roughness() float64 {
 	return s.material.roughness
 }
 
-func (s Sphere) Hit(r Ray) bool {
+// If the ray hits the sphere, return where along the ray it does so
+// If the ray does not hit the sphere, return -1
+func (s Sphere) Hit(r Ray) float64 {
 	// Get the distance vector from the origin of the ray to the center of the object
 	distance := r.origin.Sub(s.position)
 
 	// Treat the ray and the distance vector as polynomials
 	// Calculating the discriminant will give us the number of intersections
-	a := r.direction.Dot(r.direction)
-	b := distance.Dot(r.direction) * 2
-	c := distance.Dot(distance) - s.radius*s.radius
+	a := r.direction.LengthSquared()
+	halfB := distance.Dot(r.direction)
+	c := distance.LengthSquared() - s.radius*s.radius
 
-	// If the determinant is ever negative, it meand we have
-	return b*b-4*a*c >= 0
+	discriminant := halfB*halfB - a*c
+
+	// Check for a hit
+	if discriminant < 0 {
+		return -1
+	}
+
+	// Finish the quadratic formula
+	return (-halfB - math.Sqrt(discriminant)) / a
+}
+
+// The normal vector of the point where the ray hit the sphere
+func (s Sphere) Normal(r Ray, t float64) Vec3 {
+	return r.At(t).Sub(s.position)
+}
+
+// The unit normal vector of the point where the ray hit the sphere
+func (s Sphere) UnitNormal(r Ray, t float64) Vec3 {
+	return s.Normal(r, t).Unit()
 }

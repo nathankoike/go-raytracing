@@ -18,12 +18,17 @@ import (
 
 // Some globals to help
 var (
-	screenWidth, screenHeight = 1280, 720
+	// screenWidth, screenHeight = 1920, 1080 // Higher res for efficiency testing
+	screenWidth, screenHeight = 640, 360 // Lower res for dev testing
 	// aspectRatio                       = screenWidth / screenHeight
 	viewportHeight float64 = 2
 	lfsr           LFSR16  = LFSR16{seed: 37} // Veritasium: 37
-	mode                   = 2                // Which scene do we draw?
 
+	// Scene selectors
+	drawMode = 2 // [noise, rainbowRectangle, rayTraced]
+	rtScene  = 2 // [rtSkybox, rtObjectColors, rtNormals]
+
+	// Min blue value for rainbow rectangle
 	minBlue float64 = 128
 
 	// RGB values for white and the sky
@@ -130,15 +135,8 @@ func drawRainbowRectangle(pixelBuffer *image.RGBA) {
 	}
 }
 
-func rayColor(ray Ray) color.RGBA {
-	// Check if the ray hits any objects. If it does, we can process and return
-	// the color of the object that was hit
-	for _, o := range objects {
-		if o.Hit(ray) {
-			return o.Color()
-		}
-	}
-
+// Return the color of the sky if the ray misses all objects
+func raySkyColor(ray Ray) color.RGBA {
 	// Get the color of the skybox at the given ray
 	c := 0.5 * (ray.direction.Unit().y + 1.0)
 	rgb := white.Scale(1 - c).Add(sky.Scale(c))
@@ -149,6 +147,60 @@ func rayColor(ray Ray) color.RGBA {
 		B: uint8(rgb.z),
 		A: 0xff,
 	}
+}
+
+// Return the color of the objects hit by the ray or the sky
+func rayObjectColor(ray Ray) color.RGBA {
+	// Check if the ray hits any objects
+	for _, o := range objects {
+		t := o.Hit(ray)
+
+		if t > 0 {
+			return o.Color() // Return the color of the object
+		}
+	}
+
+	return raySkyColor(ray)
+}
+
+// Use the normal vector of the object hit by the ray to determine the color
+func rayNormalColor(ray Ray) color.RGBA {
+	// Check if the ray hits any objects
+	for _, o := range objects {
+		t := o.Hit(ray)
+
+		if t > 0 {
+			// return o.Color() // Return the color of the object
+
+			// The unit normal vector where the ray hits the object
+			normal := o.UnitNormal(ray, t)
+
+			// Make sure we have positive numbers, then scale the normal to get usable color values
+			scaledNormal := Vec3{normal.x + 1, normal.y + 1, normal.z + 1}.Scale(255)
+			return color.RGBA{
+				R: uint8(scaledNormal.x / 2),
+				G: uint8(scaledNormal.y / 2),
+				B: uint8(scaledNormal.z / 2),
+				A: 0xff,
+			}
+		}
+	}
+
+	return raySkyColor(ray)
+}
+
+// What color should the pixel be at the ray?
+func rayColor(ray Ray) color.RGBA {
+	switch rtScene {
+	case 0:
+		return raySkyColor(ray)
+	case 1:
+		return rayObjectColor(ray)
+	case 2:
+		return rayNormalColor(ray)
+	}
+
+	return color.RGBA{}
 }
 
 // Write a raytraced frame to the pixel buffer
@@ -204,7 +256,7 @@ func render(s screen.Screen, window screen.Window, screenBuffer screen.Buffer) {
 		// Check for draw event
 		case paint.Event:
 			start := time.Now()
-			switch mode {
+			switch drawMode {
 			case 0:
 				drawNoise(pixelBuffer)
 			case 1:
