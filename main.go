@@ -18,11 +18,11 @@ import (
 
 // Some globals to help
 var (
-	screenWidth, screenHeight         = 1280, 720
-	aspectRatio                       = screenWidth / screenHeight
-	viewportHeight            float64 = 2
-	rngSeed                   uint16  = 37 // Veritasium: 37
-	mode                              = 2  // Which scene do we draw?
+	screenWidth, screenHeight = 1280, 720
+	// aspectRatio                       = screenWidth / screenHeight
+	viewportHeight float64 = 2
+	lfsr           LFSR16  = LFSR16{seed: 37} // Veritasium: 37
+	mode                   = 2                // Which scene do we draw?
 
 	minBlue float64 = 128
 
@@ -30,20 +30,51 @@ var (
 	white = Vec3{x: 255, y: 255, z: 255}
 	sky   = Vec3{x: 127, y: 192, z: 255}
 
+	// This slice will store all the obejects in out scene
+	objects = make([]Object, 0)
+
 	sizeEvent size.Event
 )
 
-// A 16-bit LFSR
-func lfsr() {
-	rngSeed ^= rngSeed >> 7
-	rngSeed ^= rngSeed << 9
-	rngSeed ^= rngSeed >> 13
-}
-
 // Generate a pseudo-random number
 func randomUint16() uint16 {
-	lfsr()
-	return rngSeed
+	lfsr = lfsr.Shift()
+	return lfsr.seed
+}
+
+// Create a camera sized and scaled for the current window size
+func createCamera() Camera {
+	// Setup the camera viewport
+	viewportWidth := viewportHeight * float64(screenWidth) / float64(screenHeight)
+
+	// Get vec3s that traverse the viewport plane in the same direction as the
+	// screen coordinate system
+	viewportX := Vec3{x: viewportWidth, y: 0, z: 0}
+	viewportY := Vec3{x: 0, y: -viewportHeight, z: 0}
+
+	// Create a camera for the scene
+	camera := Camera{
+		position:       Vec3{x: 0, y: 0, z: 0},
+		focalLength:    1,
+		viewportHeight: viewportHeight,
+		viewportWidth:  viewportWidth,
+		viewportX:      viewportX,
+		viewportY:      viewportY,
+
+		// Get vec3s to represent the ratio difference between the viewport
+		// vectors and the actual screen size
+		pixelDeltaX: viewportX.Div(float64(screenWidth)),
+		pixelDeltaY: viewportY.Div(float64(screenHeight)),
+
+		// The location of the top left corner of the screen, relative to the
+		// position of the camera
+		pixel00: Vec3{x: 0, y: 0, z: 0}, // Fill this in later
+	}
+
+	// Set the proprt location of the top left pixel in the camera
+	camera.pixel00 = camera.TopLeft().Add(camera.pixelDeltaX.Add(camera.pixelDeltaY).Div(2))
+
+	return camera
 }
 
 // Resize the screen
@@ -100,8 +131,16 @@ func drawRainbowRectangle(pixelBuffer *image.RGBA) {
 }
 
 func rayColor(ray Ray) color.RGBA {
-	c := 0.5 * (ray.direction.Unit().y + 1.0)
+	// Check if the ray hits any objects. If it does, we can process and return
+	// the color of the object that was hit
+	for _, o := range objects {
+		if o.Hit(ray) {
+			return o.Color()
+		}
+	}
 
+	// Get the color of the skybox at the given ray
+	c := 0.5 * (ray.direction.Unit().y + 1.0)
 	rgb := white.Scale(1 - c).Add(sky.Scale(c))
 
 	return color.RGBA{
@@ -141,35 +180,8 @@ func render(s screen.Screen, window screen.Window, screenBuffer screen.Buffer) {
 	// We will write into this buffer to draw to the screen
 	pixelBuffer := screenBuffer.RGBA()
 
-	// Setup the camera viewport
-	viewportWidth := viewportHeight * float64(aspectRatio)
-
-	// Get vec3s that traverse the viewport plane in the same direction as the
-	// screen coordinate system
-	viewportX := Vec3{x: viewportWidth, y: 0, z: 0}
-	viewportY := Vec3{x: 0, y: -viewportHeight, z: 0}
-
-	// Create a camera for the scene
-	camera := Camera{
-		position:       Vec3{x: 0, y: 0, z: 0},
-		focalLength:    1,
-		viewportHeight: viewportHeight,
-		viewportWidth:  viewportWidth,
-		viewportX:      viewportX,
-		viewportY:      viewportY,
-
-		// Get vec3s to represent the ratio difference between the viewport
-		// vectors and the actual screen size
-		pixelDeltaX: viewportX.Div(float64(screenWidth)),
-		pixelDeltaY: viewportY.Div(float64(screenHeight)),
-
-		// The location of the top left corner of the screen, relative to the
-		// position of the camera
-		pixel00: Vec3{x: 0, y: 0, z: 0}, // Fill this in later
-	}
-
-	// Set the proprt location of the top left pixel in the camera
-	camera.pixel00 = camera.TopLeft().Add(camera.pixelDeltaX.Add(camera.pixelDeltaY).Div(2))
+	// We need a camera for the scene
+	camera := createCamera()
 
 	// Loop indefinitely, closing when the window is closed
 	for {
@@ -179,6 +191,7 @@ func render(s screen.Screen, window screen.Window, screenBuffer screen.Buffer) {
 		// Check for screen resize
 		case size.Event:
 			handleResize(s, event, &screenBuffer)
+			camera = createCamera()
 			pixelBuffer = screenBuffer.RGBA()
 
 		// If the type of the event is lifecycle.Event
@@ -237,6 +250,17 @@ func main() {
 			window.Release() // Clean up the window
 		}
 		defer screenBuffer.Release()
+
+		// Fill the scene with objects
+		objects = append(objects, Sphere{
+			position: Vec3{0, 0, -1},
+			radius:   0.5,
+			material: Material{
+				color:        color.RGBA{255, 0, 0, 255},
+				reflectivity: 0,
+				roughness:    0,
+			},
+		})
 
 		render(s, window, screenBuffer)
 	})
