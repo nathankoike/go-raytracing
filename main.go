@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"log"
 	"math"
+	"math/rand/v2"
 	"time"
 
 	"golang.org/x/exp/shiny/driver"
@@ -18,15 +19,13 @@ import (
 
 // Some globals to help
 var (
-	// screenWidth, screenHeight = 1920, 1080 // Higher res for efficiency testing
-	screenWidth, screenHeight = 640, 360 // Lower res for dev testing
+	screenWidth, screenHeight = 1920, 1080 // Higher res for efficiency testing
+	// screenWidth, screenHeight = 640, 360 // Lower res for dev testing
 	// aspectRatio                       = screenWidth / screenHeight
-	viewportHeight float64 = 2
-	lfsr           LFSR16  = LFSR16{seed: 37} // Veritasium: 37
+	viewportHeight float64 = 1
 
 	// Scene selectors
 	drawMode = 2 // [noise, rainbowRectangle, rayTraced]
-	rtScene  = 2 // [rtSkybox, rtObjectColors, rtNormals]
 
 	// Min blue value for rainbow rectangle
 	minBlue float64 = 128
@@ -35,22 +34,24 @@ var (
 	white = Vec3{x: 255, y: 255, z: 255}
 	sky   = Vec3{x: 127, y: 192, z: 255}
 
+	// How many color samples do we take per pixel on the screen
+	samplesPerPixel = 8
+
 	// This slice will store all the obejects in out scene
 	objects = make([]Object, 0)
 
 	sizeEvent size.Event
 )
 
-// Generate a pseudo-random number
+// Generate a pseudo-random uint16
 func randomUint16() uint16 {
-	lfsr = lfsr.Shift()
-	return lfsr.seed
+	return uint16(rand.IntN(math.MaxUint16))
 }
 
 // Create a camera sized and scaled for the current window size
 func createCamera() Camera {
 	// Setup the camera viewport
-	viewportWidth := viewportHeight * float64(screenWidth) / float64(screenHeight)
+	viewportWidth := (float64(screenWidth) / float64(screenHeight)) * viewportHeight
 
 	// Get vec3s that traverse the viewport plane in the same direction as the
 	// screen coordinate system
@@ -149,75 +150,84 @@ func raySkyColor(ray Ray) color.RGBA {
 	}
 }
 
-// Return the color of the objects hit by the ray or the sky
-func rayObjectColor(ray Ray) color.RGBA {
-	// Check if the ray hits any objects
-	for _, o := range objects {
-		t := o.Hit(ray)
-
-		if t > 0 {
-			return o.Color() // Return the color of the object
-		}
+// Determine the color based on the normal vector of the object
+func normalColor(normal Vec3) color.RGBA {
+	// Make sure we have positive numbers, then scale the normal to get usable color values
+	scaledNormal := Vec3{normal.x + 1, normal.y + 1, normal.z + 1}.Scale(255)
+	return color.RGBA{
+		R: uint8(scaledNormal.x / 2),
+		G: uint8(scaledNormal.y / 2),
+		B: uint8(scaledNormal.z / 2),
+		A: 0xff,
 	}
-
-	return raySkyColor(ray)
-}
-
-// Use the normal vector of the object hit by the ray to determine the color
-func rayNormalColor(ray Ray) color.RGBA {
-	// Check if the ray hits any objects
-	for _, o := range objects {
-		t := o.Hit(ray)
-
-		if t > 0 {
-			// return o.Color() // Return the color of the object
-
-			// The unit normal vector where the ray hits the object
-			normal := o.UnitNormal(ray, t)
-
-			// Make sure we have positive numbers, then scale the normal to get usable color values
-			scaledNormal := Vec3{normal.x + 1, normal.y + 1, normal.z + 1}.Scale(255)
-			return color.RGBA{
-				R: uint8(scaledNormal.x / 2),
-				G: uint8(scaledNormal.y / 2),
-				B: uint8(scaledNormal.z / 2),
-				A: 0xff,
-			}
-		}
-	}
-
-	return raySkyColor(ray)
 }
 
 // What color should the pixel be at the ray?
 func rayColor(ray Ray) color.RGBA {
-	switch rtScene {
-	case 0:
-		return raySkyColor(ray)
-	case 1:
-		return rayObjectColor(ray)
-	case 2:
-		return rayNormalColor(ray)
+	// Track the closest object hit
+	minT := math.MaxFloat64
+	var closestObj Object = nil
+
+	// Check if the ray hits any objects
+	for _, o := range objects {
+		t := o.Hit(ray)
+
+		// Check if there was a hit
+		if t > 0 {
+			// Check if this object is closer than another object
+			if t < minT {
+				minT = t
+				closestObj = o
+			}
+		}
 	}
 
-	return color.RGBA{}
+	if closestObj != nil {
+		// return o.Color() // Return the color of the object
+
+		// The unit normal vector where the ray hits the object
+		return normalColor(closestObj.UnitNormal(ray, minT))
+	}
+
+	return raySkyColor(ray)
 }
 
 // Write a raytraced frame to the pixel buffer
 func raytracedScene(pixelBuffer *image.RGBA, camera Camera) {
 	for y := 0; y < screenHeight; y++ {
 		for x := 0; x < screenWidth; x++ {
-			// Scale the ratio differences by the coordinates of the current pixel
-			xVec := camera.pixelDeltaX.Scale(float64(x))
-			yVec := camera.pixelDeltaY.Scale(float64(y))
+			// Store the cumulative RGB values for the pixel color
+			pixelColor := Vec3{0, 0, 0}
 
-			// Calculate the offset from the camera position to the pixel on the screen
-			directionToPixel := camera.pixel00.Add(xVec).Add(yVec).Sub(camera.position)
+			// Take multiple samples for the pixel
+			for i := 0; i < samplesPerPixel; i++ {
+				// Generate some small random offsets for the pixel
+				offsetX := rand.Float64() - 0.5
+				offsetY := rand.Float64() - 0.5
 
-			// Cast a ray from the camera center to the pixel
-			r := Ray{origin: camera.position, direction: directionToPixel}
+				// Scale the ratio differences by the coordinates of the current
+				// pixel, adding the offset to vary the direction
+				xVec := camera.pixelDeltaX.Scale(float64(x) + offsetX)
+				yVec := camera.pixelDeltaY.Scale(float64(y) + offsetY)
 
-			pixelBuffer.SetRGBA(x, y, rayColor(r))
+				// Calculate the offset from the camera position to the pixel on the screen
+				directionToPixel := camera.pixel00.Add(xVec).Add(yVec).Sub(camera.position)
+
+				// Cast a ray from the camera center to the pixel
+				r := Ray{origin: camera.position, direction: directionToPixel}
+				colorOfRay := rayColor(r)
+
+				pixelColor.x += float64(colorOfRay.R)
+				pixelColor.y += float64(colorOfRay.G)
+				pixelColor.z += float64(colorOfRay.B)
+			}
+
+			// Set the final pixel color
+			pixelBuffer.SetRGBA(x, y, color.RGBA{
+				uint8(pixelColor.x / float64(samplesPerPixel)),
+				uint8(pixelColor.y / float64(samplesPerPixel)),
+				uint8(pixelColor.z / float64(samplesPerPixel)),
+				0xff})
 		}
 	}
 }
@@ -303,9 +313,20 @@ func main() {
 		}
 		defer screenBuffer.Release()
 
+		// Add a ground sphere
+		objects = append(objects, Sphere{
+			position: Vec3{0, -100.5, -1},
+			radius:   100,
+			material: Material{
+				color:        color.RGBA{0, 255, 0, 255},
+				reflectivity: 0,
+				roughness:    0,
+			},
+		})
+
 		// Fill the scene with objects
 		objects = append(objects, Sphere{
-			position: Vec3{0, 0, -1},
+			position: Vec3{0, 0, -2},
 			radius:   0.5,
 			material: Material{
 				color:        color.RGBA{255, 0, 0, 255},
