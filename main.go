@@ -40,7 +40,7 @@ var (
 	samplesPerPixel = 8
 
 	// The number of times a ray can bounce before returning 0
-	maxBounces = 10
+	maxBounces = 256
 
 	// This slice will store all the obejects in out scene
 	objects = make([]Object, 0)
@@ -55,7 +55,7 @@ func randomUint16() uint16 {
 
 // Generate a random vec3
 func randomVec3() Vec3 {
-	return Vec3{rand.Float64(), rand.Float64(), rand.Float64()}
+	return Vec3{rand.Float64() - 0.5, rand.Float64() - 0.5, rand.Float64() - 0.5}
 }
 
 func randomRangeVec3(min float64, max float64) Vec3 {
@@ -190,6 +190,15 @@ func normalColor(normal Vec3) color.RGBA {
 	}
 }
 
+// Take a linear component and transform it into a gamma value
+func linearToGamma(linear float64) float64 {
+	if linear > 0 {
+		return math.Sqrt(linear)
+	}
+
+	return 0
+}
+
 // Determine the color based on the color of the object and its surface rougness
 func rayObjectColor(object Object, ray Ray, t float64, maxDepth int) color.RGBA {
 	// Find the normal of the hit object
@@ -211,7 +220,7 @@ func rayObjectColor(object Object, ray Ray, t float64, maxDepth int) color.RGBA 
 
 	// Don't send off rays unnecessarily
 	if reflectivity > 0 {
-		newRayDir := Vec3{0, 0, 0}
+		newRayDir := hitNormal
 
 		// Don't calculate any random vectors unless there's a need to
 		if object.Roughness() > 0 {
@@ -224,13 +233,17 @@ func rayObjectColor(object Object, ray Ray, t float64, maxDepth int) color.RGBA 
 				randomUnit = randomUnit.Scale(-1)
 			}
 
-			// TODO: add reflectivity to actually bounce light, not just scatter it
-			newRayDir = randomUnit.Scale(object.Roughness())
+			newRayDir = newRayDir.Add(randomUnit.Scale(object.Roughness()))
 		}
+
+		newRayDir = newRayDir.Add(hitNormal.Scale(1 - object.Roughness()))
 
 		// Cast a ray and extract its color values
 		castColor := rayColor(Ray{ray.At(t), newRayDir}, maxDepth-1)
-		rayCastColor = Vec3{float64(castColor.R), float64(castColor.G), float64(castColor.B)}
+		rayCastColor = Vec3{
+			float64(castColor.R),
+			float64(castColor.G),
+			float64(castColor.B)}
 
 		// Scale the returned values appropriately for their color channels
 		rayCastColor = Vec3{
@@ -240,14 +253,23 @@ func rayObjectColor(object Object, ray Ray, t float64, maxDepth int) color.RGBA 
 		}
 	}
 
-	// // Compose the color of the ray
-	// composedRGB := objRGB.Scale(1 - reflectivity)
-	// composedRGB = composedRGB.Add(rayCastColor.Scale((reflectivity)))
+	// Compose the color of the ray
+	scaledObjectRGB := objRGB.Scale(1 - reflectivity)
+	scaledRayRGB := rayCastColor.Scale(reflectivity)
 
-	// Just output half the reflected color for now
-	composedRGB := rayCastColor.Scale(reflectivity)
+	composedRGB := Vec3{
+		(scaledObjectRGB.x + scaledRayRGB.x),
+		(scaledObjectRGB.y + scaledRayRGB.y),
+		(scaledObjectRGB.z + scaledRayRGB.z),
+	}
 
-	return color.RGBA{uint8(composedRGB.x), uint8(composedRGB.y), uint8(composedRGB.z), maxColorVal}
+	composedRGB = composedRGB.Scale(reflectivity)
+
+	return color.RGBA{
+		uint8(composedRGB.x),
+		uint8(composedRGB.y),
+		uint8(composedRGB.z),
+		maxColorVal}
 }
 
 // What color should the pixel be at the ray?
@@ -258,7 +280,7 @@ func rayColor(ray Ray, maxDepth int) color.RGBA {
 	}
 
 	// Track the closest object hit and create an interval for the hit range
-	hitInterval := Interval{0, math.MaxFloat64}
+	hitInterval := Interval{0.0001, math.MaxFloat64}
 	var closestObj Object = nil
 
 	// Check if the ray hits any objects
@@ -320,11 +342,22 @@ func raytracedScene(pixelBuffer *image.RGBA, camera Camera) {
 				pixelColor.z += float64(colorOfRay.B)
 			}
 
+			// Average the pixel colors
+			pixelColor.x = pixelColor.x / float64(samplesPerPixel)
+			pixelColor.y = pixelColor.y / float64(samplesPerPixel)
+			pixelColor.z = pixelColor.z / float64(samplesPerPixel)
+
+			// // Gamma correction
+			// intensity := Interval{0, 1}
+			// pixelColor.x = intensity.Clamp(linearToGamma(pixelColor.x/float64(maxColorVal))) * float64(maxColorVal)
+			// pixelColor.y = intensity.Clamp(linearToGamma(pixelColor.y/float64(maxColorVal))) * float64(maxColorVal)
+			// pixelColor.z = intensity.Clamp(linearToGamma(pixelColor.z/float64(maxColorVal))) * float64(maxColorVal)
+
 			// Set the final pixel color
 			pixelBuffer.SetRGBA(x, y, color.RGBA{
-				uint8(pixelColor.x / float64(samplesPerPixel)),
-				uint8(pixelColor.y / float64(samplesPerPixel)),
-				uint8(pixelColor.z / float64(samplesPerPixel)),
+				uint8(pixelColor.x),
+				uint8(pixelColor.y),
+				uint8(pixelColor.z),
 				maxColorVal})
 		}
 	}
@@ -411,24 +444,73 @@ func main() {
 		}
 		defer screenBuffer.Release()
 
+		// Create some default materials
+		groundMaterial := Material{
+			color:     color.RGBA{128, 128, 128, maxColorVal},
+			roughness: 1,
+		}
+
+		defaultSphereMaterial := Material{
+			color:     color.RGBA{128, 128, 128, maxColorVal},
+			roughness: 1,
+		}
+
+		metalMaterial := Material{
+			color:     color.RGBA{maxColorVal - 0xf, maxColorVal - 0xf, maxColorVal - 0xf, maxColorVal},
+			roughness: 0,
+		}
+
+		yellowMetalMaterial := Material{
+			color:     color.RGBA{maxColorVal, maxColorVal, 128, maxColorVal},
+			roughness: 0.1,
+		}
+
+		darkMetalMaterial := Material{
+			color:     color.RGBA{96, 96, 128, maxColorVal},
+			roughness: 0,
+		}
+
+		diffuseWhiteMaterial := Material{
+			color:     color.RGBA{maxColorVal, maxColorVal, maxColorVal, maxColorVal},
+			roughness: 1,
+		}
+
 		// Add a ground sphere
 		objects = append(objects, Sphere{
 			position: Vec3{0, -100.5, -1},
 			radius:   100,
-			material: Material{
-				color:     color.RGBA{128, 128, 128, maxColorVal},
-				roughness: 1,
-			},
+			material: groundMaterial,
 		})
 
 		// Fill the scene with objects
 		objects = append(objects, Sphere{
 			position: Vec3{0, 0, -2},
 			radius:   0.5,
-			material: Material{
-				color:     color.RGBA{128, 128, 128, maxColorVal},
-				roughness: 1,
-			},
+			material: defaultSphereMaterial,
+		})
+
+		objects = append(objects, Sphere{
+			position: Vec3{-2, 0.5, -3.5},
+			radius:   1,
+			material: metalMaterial,
+		})
+
+		objects = append(objects, Sphere{
+			position: Vec3{1.5, 0, -2.5},
+			radius:   0.5,
+			material: yellowMetalMaterial,
+		})
+
+		objects = append(objects, Sphere{
+			position: Vec3{1.5, 3.5, -4},
+			radius:   3,
+			material: darkMetalMaterial,
+		})
+
+		objects = append(objects, Sphere{
+			position: Vec3{0, -0.5, -0.5},
+			radius:   0.1,
+			material: diffuseWhiteMaterial,
 		})
 
 		render(s, window, screenBuffer)
