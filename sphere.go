@@ -20,17 +20,13 @@ func (s Sphere) Color() color.RGBA {
 	return s.material.color
 }
 
-func (s Sphere) Reflectivity() float64 {
-	return s.material.reflectivity
-}
-
 func (s Sphere) Roughness() float64 {
 	return s.material.roughness
 }
 
 // If the ray hits the sphere, return where along the ray it does so
 // If the ray does not hit the sphere, return -1
-func (s Sphere) Hit(r Ray) float64 {
+func (s Sphere) Hit(r Ray, itv Interval) float64 {
 	// Get the distance vector from the origin of the ray to the center of the object
 	distance := r.origin.Sub(s.position)
 
@@ -47,8 +43,18 @@ func (s Sphere) Hit(r Ray) float64 {
 		return -1
 	}
 
+	root := (-halfB - math.Sqrt(discriminant)) / a
+
+	// Find the nearest acceptable root
+	if !itv.Contains(root) {
+		root = (-halfB + math.Sqrt(discriminant)) / a
+		if !itv.Contains(root) {
+			return -1
+		}
+	}
+
 	// Finish the quadratic formula
-	return (-halfB - math.Sqrt(discriminant)) / a
+	return root
 }
 
 // The normal vector of the point where the ray hit the sphere

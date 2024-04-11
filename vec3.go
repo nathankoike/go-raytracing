@@ -67,6 +67,12 @@ func (v Vec3) Cross(v2 Vec3) Vec3 {
 	}
 }
 
+// Returns the unit vector for this vec3
 func (v Vec3) Unit() Vec3 {
 	return v.Div(v.Length())
+}
+
+// Determine if the two vectors on the same plane/hemisphere
+func (v Vec3) OnPlane(v2 Vec3) bool {
+	return v.Dot(v2) > 0
 }

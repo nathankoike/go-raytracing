@@ -19,23 +19,28 @@ import (
 
 // Some globals to help
 var (
-	screenWidth, screenHeight = 1920, 1080 // Higher res for efficiency testing
-	// screenWidth, screenHeight = 640, 360 // Lower res for dev testing
+	// screenWidth, screenHeight = 1920, 1080 // Higher res for efficiency testing
+	screenWidth, screenHeight = 640, 360 // Lower res for dev testing
 	// aspectRatio                       = screenWidth / screenHeight
 	viewportHeight float64 = 1
 
 	// Scene selectors
 	drawMode = 2 // [noise, rainbowRectangle, rayTraced]
 
+	maxColorVal uint8 = 255 // The maximum value a single color channel can hold
+
 	// Min blue value for rainbow rectangle
 	minBlue float64 = 128
 
 	// RGB values for white and the sky
-	white = Vec3{x: 255, y: 255, z: 255}
-	sky   = Vec3{x: 127, y: 192, z: 255}
+	white = Vec3{x: float64(maxColorVal), y: float64(maxColorVal), z: float64(maxColorVal)}
+	sky   = Vec3{x: 127, y: 192, z: float64(maxColorVal)}
 
-	// How many color samples do we take per pixel on the screen
+	// The number of color samples taken per pixel
 	samplesPerPixel = 8
+
+	// The number of times a ray can bounce before returning 0
+	maxBounces = 10
 
 	// This slice will store all the obejects in out scene
 	objects = make([]Object, 0)
@@ -46,6 +51,29 @@ var (
 // Generate a pseudo-random uint16
 func randomUint16() uint16 {
 	return uint16(rand.IntN(math.MaxUint16))
+}
+
+// Generate a random vec3
+func randomVec3() Vec3 {
+	return Vec3{rand.Float64(), rand.Float64(), rand.Float64()}
+}
+
+func randomRangeVec3(min float64, max float64) Vec3 {
+	// Gracefully handle bounds error
+	if min >= max {
+		return Vec3{}
+	}
+
+	// How far apart are the min and max values
+	offset := float64(max - min)
+
+	// Get some random values on the interval [0, offset]
+	x := rand.Float64() * offset
+	y := rand.Float64() * offset
+	z := rand.Float64() * offset
+
+	// Increase the floor such that every value is on the interval [min, max]
+	return Vec3{x + min, y + min, z + min}
 }
 
 // Create a camera sized and scaled for the current window size
@@ -114,7 +142,7 @@ func drawNoise(pixelBuffer *image.RGBA) {
 					uint8(randomUint16() >> offset), // R
 					uint8(randomUint16() >> offset), // G
 					uint8(randomUint16() >> offset), // B
-					0xff})                           // A
+					maxColorVal})                    // A
 		}
 	}
 }
@@ -131,7 +159,7 @@ func drawRainbowRectangle(pixelBuffer *image.RGBA) {
 					uint8(math.Floor(float64(x) / float64(screenWidth) * 256)),                               // R
 					uint8(math.Floor(float64(y) / float64(screenHeight) * 256)),                              // G
 					uint8(math.Max(math.Floor(float64(x*y)/float64(screenWidth*screenHeight)*256), minBlue)), // B
-					0xff}) // A
+					maxColorVal}) // A
 		}
 	}
 }
@@ -146,47 +174,113 @@ func raySkyColor(ray Ray) color.RGBA {
 		R: uint8(rgb.x),
 		G: uint8(rgb.y),
 		B: uint8(rgb.z),
-		A: 0xff,
+		A: maxColorVal,
 	}
 }
 
 // Determine the color based on the normal vector of the object
 func normalColor(normal Vec3) color.RGBA {
 	// Make sure we have positive numbers, then scale the normal to get usable color values
-	scaledNormal := Vec3{normal.x + 1, normal.y + 1, normal.z + 1}.Scale(255)
+	scaledNormal := Vec3{normal.x + 1, normal.y + 1, normal.z + 1}.Scale(float64(maxColorVal))
 	return color.RGBA{
 		R: uint8(scaledNormal.x / 2),
 		G: uint8(scaledNormal.y / 2),
 		B: uint8(scaledNormal.z / 2),
-		A: 0xff,
+		A: maxColorVal,
 	}
 }
 
+// Determine the color based on the color of the object and its surface rougness
+func rayObjectColor(object Object, ray Ray, t float64, maxDepth int) color.RGBA {
+	// Find the normal of the hit object
+	hitNormal := object.UnitNormal(ray, t)
+
+	// Get the object color as a simple vec3 of RGB
+	objColor := object.Color()
+	objRGB := Vec3{float64(objColor.R), float64(objColor.G), float64(objColor.B)}
+
+	// Determine the average reflectivity of the object
+	var reflectivity float64 = objRGB.x / float64(maxColorVal)
+	reflectivity += objRGB.y / float64(maxColorVal)
+	reflectivity += objRGB.z / float64(maxColorVal)
+
+	reflectivity /= 3
+
+	// Store the RGB values of the ray cast into the scene
+	rayCastColor := Vec3{0, 0, 0}
+
+	// Don't send off rays unnecessarily
+	if reflectivity > 0 {
+		newRayDir := Vec3{0, 0, 0}
+
+		// Don't calculate any random vectors unless there's a need to
+		if object.Roughness() > 0 {
+			// Generate a random unit vector
+			randomUnit := randomVec3().Unit()
+
+			// Make sure the random unit vector is on the same hemisphere as the
+			// normal vector at the point where the initial ray hit the object
+			if !randomUnit.OnPlane(hitNormal) {
+				randomUnit = randomUnit.Scale(-1)
+			}
+
+			// TODO: add reflectivity to actually bounce light, not just scatter it
+			newRayDir = randomUnit.Scale(object.Roughness())
+		}
+
+		// Cast a ray and extract its color values
+		castColor := rayColor(Ray{ray.At(t), newRayDir}, maxDepth-1)
+		rayCastColor = Vec3{float64(castColor.R), float64(castColor.G), float64(castColor.B)}
+
+		// Scale the returned values appropriately for their color channels
+		rayCastColor = Vec3{
+			rayCastColor.x * float64(objRGB.x) / float64(maxColorVal),
+			rayCastColor.y * float64(objRGB.y) / float64(maxColorVal),
+			rayCastColor.z * float64(objRGB.z) / float64(maxColorVal),
+		}
+	}
+
+	// // Compose the color of the ray
+	// composedRGB := objRGB.Scale(1 - reflectivity)
+	// composedRGB = composedRGB.Add(rayCastColor.Scale((reflectivity)))
+
+	// Just output half the reflected color for now
+	composedRGB := rayCastColor.Scale(reflectivity)
+
+	return color.RGBA{uint8(composedRGB.x), uint8(composedRGB.y), uint8(composedRGB.z), maxColorVal}
+}
+
 // What color should the pixel be at the ray?
-func rayColor(ray Ray) color.RGBA {
-	// Track the closest object hit
-	minT := math.MaxFloat64
+func rayColor(ray Ray, maxDepth int) color.RGBA {
+	// If we have run out of depth, return blackness
+	if maxDepth < 1 {
+		return color.RGBA{0, 0, 0, 0}
+	}
+
+	// Track the closest object hit and create an interval for the hit range
+	hitInterval := Interval{0, math.MaxFloat64}
 	var closestObj Object = nil
 
 	// Check if the ray hits any objects
 	for _, o := range objects {
-		t := o.Hit(ray)
+		// Get the distance to the object
+		t := o.Hit(ray, hitInterval)
 
-		// Check if there was a hit
+		// Check if there was a closer hit
 		if t > 0 {
-			// Check if this object is closer than another object
-			if t < minT {
-				minT = t
-				closestObj = o
-			}
+			hitInterval.max = t
+			closestObj = o
 		}
 	}
 
 	if closestObj != nil {
-		// return o.Color() // Return the color of the object
+		// return closestObj.Color() // Return the color of the object
 
-		// The unit normal vector where the ray hits the object
-		return normalColor(closestObj.UnitNormal(ray, minT))
+		// // The unit normal vector where the ray hits the object
+		// return normalColor(closestObj.UnitNormal(ray, minT))
+
+		// Return the color of the object, accounting for roughness
+		return rayObjectColor(closestObj, ray, hitInterval.max, maxDepth)
 	}
 
 	return raySkyColor(ray)
@@ -202,20 +296,24 @@ func raytracedScene(pixelBuffer *image.RGBA, camera Camera) {
 			// Take multiple samples for the pixel
 			for i := 0; i < samplesPerPixel; i++ {
 				// Generate some small random offsets for the pixel
-				offsetX := rand.Float64() - 0.5
-				offsetY := rand.Float64() - 0.5
+				// Potentially, generate one for each direction, but this ends
+				// up adding significant processing time
+				var offset float64 = 0
+				if samplesPerPixel > 1 {
+					offset = rand.Float64() - 0.5
+				}
 
 				// Scale the ratio differences by the coordinates of the current
 				// pixel, adding the offset to vary the direction
-				xVec := camera.pixelDeltaX.Scale(float64(x) + offsetX)
-				yVec := camera.pixelDeltaY.Scale(float64(y) + offsetY)
+				xVec := camera.pixelDeltaX.Scale(float64(x) + offset)
+				yVec := camera.pixelDeltaY.Scale(float64(y) + offset)
 
 				// Calculate the offset from the camera position to the pixel on the screen
 				directionToPixel := camera.pixel00.Add(xVec).Add(yVec).Sub(camera.position)
 
 				// Cast a ray from the camera center to the pixel
 				r := Ray{origin: camera.position, direction: directionToPixel}
-				colorOfRay := rayColor(r)
+				colorOfRay := rayColor(r, maxBounces)
 
 				pixelColor.x += float64(colorOfRay.R)
 				pixelColor.y += float64(colorOfRay.G)
@@ -227,7 +325,7 @@ func raytracedScene(pixelBuffer *image.RGBA, camera Camera) {
 				uint8(pixelColor.x / float64(samplesPerPixel)),
 				uint8(pixelColor.y / float64(samplesPerPixel)),
 				uint8(pixelColor.z / float64(samplesPerPixel)),
-				0xff})
+				maxColorVal})
 		}
 	}
 }
@@ -318,9 +416,8 @@ func main() {
 			position: Vec3{0, -100.5, -1},
 			radius:   100,
 			material: Material{
-				color:        color.RGBA{0, 255, 0, 255},
-				reflectivity: 0,
-				roughness:    0,
+				color:     color.RGBA{128, 128, 128, maxColorVal},
+				roughness: 1,
 			},
 		})
 
@@ -329,9 +426,8 @@ func main() {
 			position: Vec3{0, 0, -2},
 			radius:   0.5,
 			material: Material{
-				color:        color.RGBA{255, 0, 0, 255},
-				reflectivity: 0,
-				roughness:    0,
+				color:     color.RGBA{128, 128, 128, maxColorVal},
+				roughness: 1,
 			},
 		})
 
