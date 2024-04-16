@@ -38,7 +38,8 @@ var (
 	sky   = Vec3{x: 127, y: 192, z: float64(maxColorVal)}
 
 	// The number of color samples taken per pixel
-	samplesPerPixel = 8
+	// samplesPerPixel = 128 // Higher value for quality
+	samplesPerPixel = 8 // Lower value for testing
 
 	// The number of times a ray can bounce before returning 0
 	maxBounces = 16
@@ -209,6 +210,33 @@ func rayObjectColor(object Object, ray Ray, t float64, maxDepth int) color.RGBA 
 	objColor := object.Color()
 	objRGB := Vec3{float64(objColor.R), float64(objColor.G), float64(objColor.B)}
 
+	var castColor color.RGBA // This will store the color of a cast ray
+
+	// Store the RGB values of the ray cast into the scene
+	refractedRayCastColor := Vec3{0, 0, 0}
+
+	// Check for transparency
+	if object.Transparency() > 0 {
+		// Did the ray hit the front of the object?
+		hitFront := ray.HitFront(hitNormal)
+
+		newRayDir := object.Refract(ray.direction, hitNormal, hitFront).Unit()
+
+		castColor = rayColor(Ray{ray.At(t), newRayDir}, maxDepth-1)
+
+		refractedRayCastColor = Vec3{
+			float64(castColor.R),
+			float64(castColor.G),
+			float64(castColor.B)}
+
+		// Scale the returned values appropriately for their color channels
+		refractedRayCastColor = Vec3{
+			refractedRayCastColor.x * float64(objRGB.x) / float64(maxColorVal),
+			refractedRayCastColor.y * float64(objRGB.y) / float64(maxColorVal),
+			refractedRayCastColor.z * float64(objRGB.z) / float64(maxColorVal),
+		}
+	}
+
 	// Determine the average reflectivity of the object
 	var reflectivity float64 = objRGB.x / float64(maxColorVal)
 	reflectivity += objRGB.y / float64(maxColorVal)
@@ -216,10 +244,13 @@ func rayObjectColor(object Object, ray Ray, t float64, maxDepth int) color.RGBA 
 
 	reflectivity /= 3
 
-	// Store the RGB values of the ray cast into the scene
-	rayCastColor := Vec3{0, 0, 0}
+	// Check against transparency
+	reflectivity *= 1 - object.Transparency()
 
-	// Don't send off rays unnecessarily
+	// Store the RGB values of the ray cast into the scene
+	reflectedRayCastColor := Vec3{0, 0, 0}
+
+	// Don't send off reflected rays unnecessarily
 	if reflectivity > 0 {
 		newRayDir := ray.direction.Reflect(hitNormal)
 
@@ -240,31 +271,32 @@ func rayObjectColor(object Object, ray Ray, t float64, maxDepth int) color.RGBA 
 		newRayDir = newRayDir.Add(hitNormal.Scale(1 - object.Roughness()))
 
 		// Cast a ray and extract its color values
-		castColor := rayColor(Ray{ray.At(t), newRayDir}, maxDepth-1)
-		rayCastColor = Vec3{
+		castColor = rayColor(Ray{ray.At(t), newRayDir}, maxDepth-1)
+		reflectedRayCastColor = Vec3{
 			float64(castColor.R),
 			float64(castColor.G),
 			float64(castColor.B)}
 
 		// Scale the returned values appropriately for their color channels
-		rayCastColor = Vec3{
-			rayCastColor.x * float64(objRGB.x) / float64(maxColorVal),
-			rayCastColor.y * float64(objRGB.y) / float64(maxColorVal),
-			rayCastColor.z * float64(objRGB.z) / float64(maxColorVal),
+		reflectedRayCastColor = Vec3{
+			reflectedRayCastColor.x * float64(objRGB.x) / float64(maxColorVal),
+			reflectedRayCastColor.y * float64(objRGB.y) / float64(maxColorVal),
+			reflectedRayCastColor.z * float64(objRGB.z) / float64(maxColorVal),
 		}
 	}
 
 	// Compose the color of the ray
-	scaledObjectRGB := objRGB.Scale(1 - reflectivity)
-	scaledRayRGB := rayCastColor.Scale(reflectivity)
+	scaledObjectRGB := objRGB.Scale(1 - reflectivity - object.Transparency())
+	scaledReflectedRayRGB := reflectedRayCastColor.Scale(reflectivity)
+	scaledRefractedRayRGB := refractedRayCastColor.Scale(object.Transparency())
 
 	composedRGB := Vec3{
-		(scaledObjectRGB.x + scaledRayRGB.x),
-		(scaledObjectRGB.y + scaledRayRGB.y),
-		(scaledObjectRGB.z + scaledRayRGB.z),
+		(scaledObjectRGB.x + scaledReflectedRayRGB.x + scaledRefractedRayRGB.x),
+		(scaledObjectRGB.y + scaledReflectedRayRGB.y + scaledRefractedRayRGB.y),
+		(scaledObjectRGB.z + scaledReflectedRayRGB.z + scaledRefractedRayRGB.z),
 	}
 
-	composedRGB = composedRGB.Scale(reflectivity)
+	composedRGB = composedRGB.Scale(reflectivity + object.Transparency())
 
 	return color.RGBA{
 		uint8(composedRGB.x),
