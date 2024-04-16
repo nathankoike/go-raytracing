@@ -20,6 +20,7 @@ import (
 // Some globals to help
 var (
 	// screenWidth, screenHeight = 1920, 1080 // Higher res for efficiency testing
+	// screenWidth, screenHeight = 1280, 720 // Medium-high res
 	screenWidth, screenHeight = 640, 360 // Lower res for dev testing
 	// aspectRatio                       = screenWidth / screenHeight
 	viewportHeight float64 = 1
@@ -40,7 +41,7 @@ var (
 	samplesPerPixel = 8
 
 	// The number of times a ray can bounce before returning 0
-	maxBounces = 256
+	maxBounces = 16
 
 	// This slice will store all the obejects in out scene
 	objects = make([]Object, 0)
@@ -220,7 +221,7 @@ func rayObjectColor(object Object, ray Ray, t float64, maxDepth int) color.RGBA 
 
 	// Don't send off rays unnecessarily
 	if reflectivity > 0 {
-		newRayDir := hitNormal
+		newRayDir := ray.direction.Reflect(hitNormal)
 
 		// Don't calculate any random vectors unless there's a need to
 		if object.Roughness() > 0 {
@@ -444,35 +445,54 @@ func main() {
 		}
 		defer screenBuffer.Release()
 
-		// Create some default materials
+		// Create some materials
 		groundMaterial := Material{
-			color:     color.RGBA{128, 128, 128, maxColorVal},
-			roughness: 1,
+			color:           color.RGBA{128, 128, 128, maxColorVal},
+			roughness:       1,
+			transparency:    0,
+			refractionIndex: 0,
 		}
 
 		defaultSphereMaterial := Material{
-			color:     color.RGBA{128, 128, 128, maxColorVal},
-			roughness: 1,
+			color:           color.RGBA{128, 128, 128, maxColorVal},
+			roughness:       1,
+			transparency:    0,
+			refractionIndex: 0,
 		}
 
 		metalMaterial := Material{
-			color:     color.RGBA{maxColorVal - 0xf, maxColorVal - 0xf, maxColorVal - 0xf, maxColorVal},
-			roughness: 0,
+			color:           color.RGBA{maxColorVal - 0xf, maxColorVal - 0xf, maxColorVal - 0xf, maxColorVal},
+			roughness:       0,
+			transparency:    0,
+			refractionIndex: 0,
 		}
 
 		yellowMetalMaterial := Material{
-			color:     color.RGBA{maxColorVal, maxColorVal, 128, maxColorVal},
-			roughness: 0.1,
+			color:           color.RGBA{maxColorVal, maxColorVal, 128, maxColorVal},
+			roughness:       0.1,
+			transparency:    0,
+			refractionIndex: 0,
 		}
 
 		darkMetalMaterial := Material{
-			color:     color.RGBA{96, 96, 128, maxColorVal},
-			roughness: 0,
+			color:           color.RGBA{96, 96, 128, maxColorVal},
+			roughness:       0,
+			transparency:    0,
+			refractionIndex: 0,
 		}
 
 		diffuseWhiteMaterial := Material{
-			color:     color.RGBA{maxColorVal, maxColorVal, maxColorVal, maxColorVal},
-			roughness: 1,
+			color:           color.RGBA{maxColorVal, maxColorVal, maxColorVal, maxColorVal},
+			roughness:       1,
+			transparency:    0,
+			refractionIndex: 0,
+		}
+
+		glassMaterial := Material{
+			color:           color.RGBA{maxColorVal, maxColorVal, maxColorVal, maxColorVal},
+			roughness:       0,
+			transparency:    1,
+			refractionIndex: 1.5,
 		}
 
 		// Add a ground sphere
@@ -486,7 +506,7 @@ func main() {
 		objects = append(objects, Sphere{
 			position: Vec3{0, 0, -2},
 			radius:   0.5,
-			material: defaultSphereMaterial,
+			material: glassMaterial,
 		})
 
 		objects = append(objects, Sphere{
@@ -508,9 +528,15 @@ func main() {
 		})
 
 		objects = append(objects, Sphere{
-			position: Vec3{0, -0.5, -0.5},
+			position: Vec3{0, -0.4, -1.45},
 			radius:   0.1,
 			material: diffuseWhiteMaterial,
+		})
+
+		objects = append(objects, Sphere{
+			position: Vec3{0, 0.25, -5},
+			radius:   0.7,
+			material: defaultSphereMaterial,
 		})
 
 		render(s, window, screenBuffer)

@@ -76,3 +76,8 @@ func (v Vec3) Unit() Vec3 {
 func (v Vec3) OnPlane(v2 Vec3) bool {
 	return v.Dot(v2) > 0
 }
+
+// Reflect a vector about a normal
+func (v Vec3) Reflect(normal Vec3) Vec3 {
+	return v.Sub(normal.Scale(2 * v.Dot(normal)))
+}
